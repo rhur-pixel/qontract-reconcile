@@ -873,11 +873,9 @@ def run_error_healthcheck(
     consecutive_failure_limit: int = 3,
 ) -> None:
     """Check error labels for queue-eligible MRs. Apply/remove
-    pipeline-error based on consecutive failure count, and remove
-    merge-error when the MR is rebased with a passing pipeline or
-    when new notes have been posted since the label was applied.
-    Also apply merge-error to queue-eligible MRs stuck in a
-    cannot-be-merged state (e.g. after a failed async rebase)."""
+    pipeline-error based on consecutive failure count. Apply
+    merge-error to queue-eligible MRs stuck in cannot-be-merged state,
+    and clear merge-error when any new note appears after the label."""
     for mr in project_merge_requests:
         if mr.draft:
             continue
@@ -930,18 +928,6 @@ def run_error_healthcheck(
                 gl.remove_label(mr, PIPELINE_ERROR)
 
         if MERGE_ERROR in labels:
-            if pipelines[0].status == PipelineStatus.SUCCESS and is_rebased(mr, gl):
-                logging.info([
-                    "remove_label",
-                    MERGE_ERROR,
-                    gl.project.name,
-                    mr.iid,
-                    "rebased with passing pipeline",
-                ])
-                if not dry_run:
-                    gl.remove_label(mr, MERGE_ERROR)
-                continue
-
             label_events = gl.get_merge_request_label_events(mr)
             merge_error_added_at = None
             for event in reversed(label_events):
@@ -960,8 +946,7 @@ def run_error_healthcheck(
                 if any(
                     from_utc_iso_format(note.created_at)
                     > from_utc_iso_format(merge_error_added_at)
-                    and not note.system
-                    and note.author["username"] != gl.user.username
+                    and not (note.system and MERGE_ERROR in note.body)
                     for note in latest_notes
                 ):
                     logging.info([
@@ -969,7 +954,7 @@ def run_error_healthcheck(
                         MERGE_ERROR,
                         gl.project.name,
                         mr.iid,
-                        "new notes after merge-error label",
+                        "new activity after merge-error label",
                     ])
                     if not dry_run:
                         gl.remove_label(mr, MERGE_ERROR)
